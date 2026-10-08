@@ -1,12 +1,10 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "code-analyzer",
+	"account_id": "e5262d6a414ac48cb1887aa5b26b511d",
 	"main": ".svelte-kit/cloudflare/_worker.js",
 	"compatibility_date": "2026-03-06",
 	"compatibility_flags": ["nodejs_compat"],
-	"ai": {
-		"binding": "AI"
-	},
 	"migrations": [
 		{
 			"tag": "v1",
@@ -17,15 +15,49 @@
 			"deleted_classes": ["AnalysisAgent"]
 		}
 	],
-	"workflows": [
-		{
-			"name": "algorithm-analysis",
-			"binding": "ANALYSIS_WORKFLOW",
-			"class_name": "AlgorithmAnalysisWorkflow"
+	"env": {
+		"dev": {
+			"workers_dev": false,
+			"preview_urls": false,
+			"ai": {
+				"binding": "AI",
+				"remote": true
+			},
+			"workflows": [
+				{
+					"name": "algorithm-analysis-dev",
+					"binding": "ANALYSIS_WORKFLOW",
+					"class_name": "AlgorithmAnalysisWorkflow"
+				}
+			],
+			"assets": {
+				"directory": ".svelte-kit/cloudflare",
+				"binding": "ASSETS"
+			}
+		},
+		"production": {
+			"workers_dev": false,
+			"preview_urls": false,
+			"routes": [
+				{
+					"pattern": "algolens.iktrnch.dev",
+					"custom_domain": true
+				}
+			],
+			"ai": {
+				"binding": "AI"
+			},
+			"workflows": [
+				{
+					"name": "algorithm-analysis",
+					"binding": "ANALYSIS_WORKFLOW",
+					"class_name": "AlgorithmAnalysisWorkflow"
+				}
+			],
+			"assets": {
+				"directory": ".svelte-kit/cloudflare",
+				"binding": "ASSETS"
+			}
 		}
-	],
-	"assets": {
-		"directory": ".svelte-kit/cloudflare",
-		"binding": "ASSETS"
 	}
 }

@@ -8,15 +8,15 @@
 		"#lib/*": "./src/lib/*"
 	},
 	"scripts": {
-		"dev": "CLOUDFLARE_ENV=dev vite --port 5173 --strictPort",
-		"build": "vite build",
+		"dev": "CLOUDFLARE_ENV=dev vite build && wrangler dev --env dev --port 5173",
+		"build": "CLOUDFLARE_ENV=production vite build",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check .",
 		"format": "prettier --write .",
-		"dev:ui": "vite dev",
-		"deploy": "npm run build && wrangler deploy",
+		"dev:ui": "CLOUDFLARE_ENV=dev vite dev",
+		"deploy": "CLOUDFLARE_ENV=production npm run build && wrangler deploy --env production",
 		"types": "wrangler types --include-env=false",
 		"test": "npm run build && node --test --experimental-test-isolation=none tests/*.test.mjs"
 	},
