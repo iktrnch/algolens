@@ -1,19 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowStep, type WorkflowEvent } from 'cloudflare:workers';
+import type { AnalysisInput, AnalysisResult } from '../../analysis.ts';
 
-export type AnalysisInput = {
-	code: string;
-	language: string;
-};
-
-export type AnalysisResult = {
-	explanation: string;
-	complexity: {
-		time: string;
-		space: string;
-		explanation: string;
-	};
-	improvements: string[];
-};
+export type { AnalysisInput, AnalysisResult } from '../../analysis.ts';
 
 // Always returns a plain string regardless of what the AI gives back
 function extractString(response: unknown): string {

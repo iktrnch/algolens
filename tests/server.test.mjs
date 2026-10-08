@@ -2,11 +2,6 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { test } from 'node:test';
 
-// Exercise the built SvelteKit handlers while replacing only Cloudflare's SDK boundary.
-const agents = `
-export const getAgentByName = (...args) => globalThis.agentSDK.getAgentByName(...args);
-export const routeAgentRequest = (...args) => globalThis.agentSDK.routeAgentRequest(...args);
-`;
 const workers = `
 export class WorkflowEntrypoint {
 	constructor(ctx, env) { this.env = env; }
@@ -14,104 +9,116 @@ export class WorkflowEntrypoint {
 `;
 registerHooks({
 	resolve(specifier, context, nextResolve) {
-		const source =
-			specifier === 'agents' ? agents : specifier === 'cloudflare:workers' ? workers : null;
-		if (source) {
-			return { url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true };
+		if (specifier === 'cloudflare:workers') {
+			return { url: `data:text/javascript,${encodeURIComponent(workers)}`, shortCircuit: true };
 		}
 		return nextResolve(specifier, context);
 	}
 });
 
-const { POST } =
-	await import('../.svelte-kit/output/server/entries/endpoints/api/analyse/_sessionId_/_server.ts.js');
-const { GET: status } =
-	await import('../.svelte-kit/output/server/entries/endpoints/api/status/_sessionId_/_server.ts.js');
 const { GET: health } =
 	await import('../.svelte-kit/output/server/entries/endpoints/api/health/_server.ts.js');
-const { handle } = await import('../.svelte-kit/output/server/entries/hooks.server.js');
+const { awaitAnalysis, resumeAnalysis, startAnalysis, WorkflowAnalysisError } =
+	await import('../src/lib/server/analysis.ts');
 const { AlgorithmAnalysisWorkflow } = await import('../src/lib/server/workflows/analyse.ts');
 
-function event(body, platform) {
-	const url = new URL('https://algolens.example/api/analyse/session-123');
+function mockInstance(event, options = {}) {
+	let disposed = 0;
+	let filter;
+	const subscription = {
+		async next() {
+			if (options.nextError) throw options.nextError;
+			return event;
+		},
+		[Symbol.dispose]() {
+			disposed += 1;
+		}
+	};
+
 	return {
-		url,
-		request: new Request(url, { method: 'POST', body }),
-		params: { sessionId: 'session-123' },
-		platform
+		instance: {
+			async subscribe(subscriptionOptions) {
+				filter = subscriptionOptions.filter;
+				return subscription;
+			}
+		},
+		get disposed() {
+			return disposed;
+		},
+		get filter() {
+			return filter;
+		}
 	};
 }
+
+const analysisResult = {
+	explanation: 'Finds the target in a sorted array.',
+	complexity: { time: 'O(log n)', space: 'O(1)', explanation: 'Halves the range.' },
+	improvements: ['Handle empty inputs.']
+};
 
 test('health is available without Cloudflare bindings', async () => {
 	assert.deepEqual(await health().json(), { status: 'ok' });
 });
 
-test('invalid analysis requests fail before contacting the Durable Object', async () => {
-	for (const body of [
-		'{',
-		'null',
-		'[]',
-		'{}',
-		'{"code":"","language":"python"}',
-		'{"code":"x","language":42}'
+test('completed Workflow events return the typed result and dispose the subscription', async () => {
+	const mock = mockInstance({
+		done: false,
+		value: { type: 'workflow_completed', output: analysisResult }
+	});
+
+	assert.deepEqual(await awaitAnalysis(mock.instance), analysisResult);
+	assert.deepEqual(mock.filter, ['workflow_completed', 'workflow_errored', 'workflow_terminated']);
+	assert.equal(mock.disposed, 1);
+});
+
+test('Workflow errors and termination are surfaced and subscriptions are disposed', async () => {
+	for (const [value, kind] of [
+		[{ type: 'workflow_errored', error: { name: 'Error', message: 'AI failed' } }, 'errored'],
+		[{ type: 'workflow_terminated' }, 'terminated']
 	]) {
-		await assert.rejects(POST(event(body)), (error) => error.status === 400);
+		const mock = mockInstance({ done: false, value });
+		await assert.rejects(
+			awaitAnalysis(mock.instance),
+			(error) => error instanceof WorkflowAnalysisError && error.kind === kind
+		);
+		assert.equal(mock.disposed, 1);
 	}
 });
 
-test('valid requests report unavailable bindings clearly', async () => {
+test('subscription failures are recoverable and still dispose the RPC resource', async () => {
+	const mock = mockInstance(undefined, { nextError: new Error('RPC disconnected') });
 	await assert.rejects(
-		POST(event(JSON.stringify({ code: 'print(1)', language: 'python' }))),
-		(error) => error.status === 503
+		awaitAnalysis(mock.instance),
+		(error) => error instanceof WorkflowAnalysisError && error.kind === 'subscription'
 	);
+	assert.equal(mock.disposed, 1);
 });
 
-test('analysis and status resolve the same session and preserve the agent response', async () => {
-	const namespace = {};
-	const requests = [];
-	const response = Response.json(
-		{ status: 'running', workflowId: 'workflow-123' },
-		{ status: 202 }
-	);
-	globalThis.agentSDK = {
-		async getAgentByName(binding, sessionId) {
-			assert.equal(binding, namespace);
-			assert.equal(sessionId, 'session-123');
-			return {
-				fetch: async (request) => {
-					requests.push(request);
-					return response;
-				}
-			};
+test('start and recovery use the same explicit Workflow instance without polling', async () => {
+	const first = mockInstance({
+		done: false,
+		value: { type: 'workflow_completed', output: analysisResult }
+	});
+	const calls = [];
+	const workflow = {
+		async create(options) {
+			calls.push(['create', options]);
+			return first.instance;
+		},
+		async get(id) {
+			calls.push(['get', id]);
+			return first.instance;
 		}
 	};
 	const input = { code: 'print(1)', language: 'python' };
-	const requestEvent = event(JSON.stringify(input), { env: { AnalysisAgent: namespace } });
-	assert.equal(await POST(requestEvent), response);
-	assert.equal(requests[0].method, 'POST');
-	assert.equal(new URL(requests[0].url).pathname, '/analyse');
-	assert.deepEqual(await requests[0].json(), input);
-	assert.equal(await status(requestEvent), response);
-	assert.equal(requests[1].method, 'GET');
-});
 
-test('agent protocol requests pass through the SvelteKit hook', async () => {
-	const requestEvent = event('', { env: { AnalysisAgent: {} } });
-	requestEvent.url = new URL('https://algolens.example/agents/analysis-agent/session-123');
-	const response = Response.json({ status: 'idle' });
-	globalThis.agentSDK = {
-		async routeAgentRequest(request, env) {
-			assert.equal(request, requestEvent.request);
-			assert.equal(env, requestEvent.platform.env);
-			return response;
-		}
-	};
-	assert.equal(
-		await handle({ event: requestEvent, resolve: () => assert.fail('unexpected resolve') }),
-		response
-	);
-	const ordinary = event('');
-	assert.equal(await handle({ event: ordinary, resolve: () => response }), response);
+	assert.deepEqual(await startAnalysis(workflow, 'analysis-id', input), analysisResult);
+	assert.deepEqual(await resumeAnalysis(workflow, 'analysis-id'), analysisResult);
+	assert.deepEqual(calls, [
+		['create', { id: 'analysis-id', params: input }],
+		['get', 'analysis-id']
+	]);
 });
 
 test('the workflow keeps all three AI steps and parses fenced structured results', async () => {

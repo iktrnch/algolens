@@ -1,9 +1,7 @@
-import type { AnalysisAgent } from './agents/analysis';
-import type { AnalysisInput } from './workflows/analyse';
+import type { AnalysisInput } from '../analysis.ts';
 
 export interface CloudflareEnv {
 	AI: Ai;
 	ASSETS: Fetcher;
-	AnalysisAgent: DurableObjectNamespace<AnalysisAgent>;
 	ANALYSIS_WORKFLOW: Workflow<AnalysisInput>;
 }

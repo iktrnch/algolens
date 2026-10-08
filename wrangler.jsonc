@@ -7,18 +7,14 @@
 	"ai": {
 		"binding": "AI"
 	},
-	"durable_objects": {
-		"bindings": [
-			{
-				"name": "AnalysisAgent",
-				"class_name": "AnalysisAgent"
-			}
-		]
-	},
 	"migrations": [
 		{
 			"tag": "v1",
 			"new_sqlite_classes": ["AnalysisAgent"]
+		},
+		{
+			"tag": "v2",
+			"deleted_classes": ["AnalysisAgent"]
 		}
 	],
 	"workflows": [

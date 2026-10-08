@@ -1,21 +1,18 @@
 /// <reference path="../worker-configuration.d.ts" />
 
-import type { CloudflareEnv } from '$lib/server/env';
+import type { CloudflareEnv } from '#lib/server/env.js';
 
 declare global {
 	interface Env extends CloudflareEnv {}
+	namespace Cloudflare {
+		interface Env extends CloudflareEnv {}
+	}
 
 	namespace App {
 		// interface Error {}
 		// interface Locals {}
 		// interface PageData {}
 		// interface PageState {}
-		interface Platform {
-			env: Env;
-			ctx: ExecutionContext;
-			caches: CacheStorage;
-			cf: IncomingRequestCfProperties;
-		}
 	}
 }
 

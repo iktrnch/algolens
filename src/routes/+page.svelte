@@ -1,19 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { AnalysisInput, AnalysisResult } from '#lib/analysis.js';
+	import { analyse as analyseRemote, recoverAnalysis } from './analysis.remote';
 
 	// --- Types ---
-	type ComplexityResult = {
-		time: string;
-		space: string;
-		explanation: string;
-	};
-
-	type AnalysisResult = {
-		explanation: string;
-		complexity: ComplexityResult;
-		improvements: string[];
-	};
-
 	type AnalysisState = {
 		status: 'idle' | 'running' | 'complete' | 'error';
 		result: AnalysisResult | null;
@@ -21,6 +11,7 @@
 		code: string | null;
 		language: string | null;
 	};
+	type PendingAnalysis = AnalysisInput & { instanceId: string };
 
 	// --- State ---
 	let code = $state('');
@@ -32,11 +23,9 @@
 		code: null,
 		language: null
 	});
-	let pollInterval: ReturnType<typeof setInterval> | null = null;
-	let highlightedCode = $state('');
 	let stepVisible = $state({ explanation: false, complexity: false, improvements: false });
 
-	let sessionId = '';
+	const pendingAnalysisKey = 'algolensPendingAnalysis';
 
 	const languages = ['python', 'javascript', 'typescript', 'java', 'cpp', 'c', 'go', 'rust'];
 
@@ -83,48 +72,109 @@ function merge(left, right) {
 		}
 	});
 
-	async function analyse() {
+	function getErrorMessage(cause: unknown): string {
+		if (
+			typeof cause === 'object' &&
+			cause !== null &&
+			'message' in cause &&
+			typeof cause.message === 'string'
+		) {
+			return cause.message;
+		}
+		return 'Unable to run the analysis. Please try again.';
+	}
+
+	function isRecoverableConnectionError(cause: unknown): boolean {
+		if (typeof cause !== 'object' || cause === null || !('status' in cause)) return true;
+		return cause.status === 503;
+	}
+
+	function finishAnalysis(result: AnalysisResult, input: AnalysisInput) {
+		analysisState = {
+			status: 'complete',
+			result,
+			error: null,
+			code: input.code,
+			language: input.language
+		};
+	}
+
+	async function analyse(input: AnalysisInput): Promise<AnalysisResult> {
+		const pending: PendingAnalysis = {
+			...input,
+			instanceId: `analysis-${crypto.randomUUID()}`
+		};
+		sessionStorage.setItem(pendingAnalysisKey, JSON.stringify(pending));
+
+		try {
+			const result = await analyseRemote(pending);
+			sessionStorage.removeItem(pendingAnalysisKey);
+			return result;
+		} catch (cause) {
+			if (!isRecoverableConnectionError(cause)) {
+				sessionStorage.removeItem(pendingAnalysisKey);
+			}
+			throw cause;
+		}
+	}
+
+	async function runAnalysis() {
 		if (!code.trim() || analysisState.status === 'running') return;
 
 		analysisState = { status: 'running', result: null, error: null, code, language };
 
 		try {
-			const res = await fetch(`/api/analyse/${sessionId}`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ code, language })
-			});
-
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-			// Start polling for result
-			startPolling();
-		} catch (e) {
-			analysisState = { ...analysisState, status: 'error', error: String(e) };
+			const input = { code, language };
+			const result = await analyse(input);
+			finishAnalysis(result, input);
+		} catch (cause) {
+			analysisState = { ...analysisState, status: 'error', error: getErrorMessage(cause) };
 		}
 	}
 
-	function startPolling() {
-		if (pollInterval) clearInterval(pollInterval);
+	function getPendingAnalysis(): PendingAnalysis | null {
+		const stored = sessionStorage.getItem(pendingAnalysisKey);
+		if (!stored) return null;
 
-		pollInterval = setInterval(async () => {
-			try {
-				const res = await fetch(`/api/status/${sessionId}`);
-				const state: AnalysisState = await res.json();
-
-				// Skip if status hasn't been set yet
-				if (!state.status) return;
-
-				analysisState = state;
-
-				if (state.status === 'complete' || state.status === 'error') {
-					clearInterval(pollInterval!);
-					pollInterval = null;
-				}
-			} catch (e) {
-				console.error('Poll error:', e);
+		try {
+			const value = JSON.parse(stored) as Partial<PendingAnalysis>;
+			if (
+				typeof value.code === 'string' &&
+				typeof value.language === 'string' &&
+				typeof value.instanceId === 'string'
+			) {
+				return value as PendingAnalysis;
 			}
-		}, 1500); // Continually poll every 1.5 seconds until complete or error
+		} catch {
+			// Ignore invalid session data and clear it below.
+		}
+
+		sessionStorage.removeItem(pendingAnalysisKey);
+		return null;
+	}
+
+	async function recoverPendingAnalysis() {
+		const pending = getPendingAnalysis();
+		if (!pending) return;
+
+		analysisState = {
+			status: 'running',
+			result: null,
+			error: null,
+			code: pending.code,
+			language: pending.language
+		};
+
+		try {
+			const result = await recoverAnalysis(pending.instanceId);
+			sessionStorage.removeItem(pendingAnalysisKey);
+			finishAnalysis(result, pending);
+		} catch (cause) {
+			if (!isRecoverableConnectionError(cause)) {
+				sessionStorage.removeItem(pendingAnalysisKey);
+			}
+			analysisState = { ...analysisState, status: 'error', error: getErrorMessage(cause) };
+		}
 	}
 
 	function loadExample() {
@@ -138,18 +188,12 @@ function merge(left, right) {
 
 	function reset() {
 		// Clear code and reset state to initial
-		if (pollInterval) clearInterval(pollInterval);
+		sessionStorage.removeItem(pendingAnalysisKey);
 		analysisState = { status: 'idle', result: null, error: null, code: null, language: null };
 	}
 
 	onMount(() => {
-		sessionId = sessionStorage.getItem('analyzerSession') ?? crypto.randomUUID();
-		sessionStorage.setItem('analyzerSession', sessionId);
-
-		return () => {
-			// Make sure no intervals are left running when component unmounts
-			if (pollInterval) clearInterval(pollInterval);
-		};
+		void recoverPendingAnalysis();
 	});
 </script>
 
@@ -249,7 +293,7 @@ function merge(left, right) {
 
 				<!-- Analyse button -->
 				<button
-					onclick={analyse}
+					onclick={runAnalysis}
 					disabled={!code.trim() || analysisState.status === 'running'}
 					class="w-full rounded-lg py-4 font-mono text-sm font-bold tracking-widest
                  uppercase transition-all duration-200
