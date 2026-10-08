@@ -36,8 +36,7 @@
 	let highlightedCode = $state('');
 	let stepVisible = $state({ explanation: false, complexity: false, improvements: false });
 
-	const sessionId = sessionStorage.getItem('analyzerSession') ?? crypto.randomUUID();
-	sessionStorage.setItem('analyzerSession', sessionId);
+	let sessionId = '';
 
 	const languages = ['python', 'javascript', 'typescript', 'java', 'cpp', 'c', 'go', 'rust'];
 
@@ -144,6 +143,9 @@ function merge(left, right) {
 	}
 
 	onMount(() => {
+		sessionId = sessionStorage.getItem('analyzerSession') ?? crypto.randomUUID();
+		sessionStorage.setItem('analyzerSession', sessionId);
+
 		return () => {
 			// Make sure no intervals are left running when component unmounts
 			if (pollInterval) clearInterval(pollInterval);

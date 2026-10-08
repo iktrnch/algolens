@@ -4,13 +4,8 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
-	server: {
-		proxy: {
-			'/api': 'http://localhost:8787',
-			'/agents': {
-				target: 'http://localhost:8787',
-				ws: true
-			}
-		}
+	ssr: {
+		// The Agents SDK runs inside workerd, not Node during build analysis.
+		external: ['agents']
 	}
 });
