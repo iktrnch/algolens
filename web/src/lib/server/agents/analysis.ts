@@ -1,7 +1,7 @@
 import { Agent } from 'agents';
 import type { AnalysisResult } from '../workflows/analyse';
 
-// Responce structure for the analysis result stored in state
+// Response structure for the analysis result stored in state
 type AnalysisState = {
 	status: 'idle' | 'running' | 'complete' | 'error';
 	result: AnalysisResult | null;
@@ -74,7 +74,7 @@ export class AnalysisAgent extends Agent<Env, AnalysisState> {
 					this.setState({
 						...this.state,
 						status: 'complete',
-						result: status.output as any
+						result: status.output as AnalysisResult
 					});
 					return;
 				}

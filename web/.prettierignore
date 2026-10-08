@@ -7,3 +7,6 @@ bun.lockb
 
 # Miscellaneous
 /static/
+
+# Generated Cloudflare runtime declarations
+worker-configuration.d.ts

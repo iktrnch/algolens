@@ -1,6 +1,6 @@
-import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
+import { WorkflowEntrypoint, type WorkflowStep, type WorkflowEvent } from 'cloudflare:workers';
 
-type AnalysisInput = {
+export type AnalysisInput = {
 	code: string;
 	language: string;
 };
@@ -50,7 +50,7 @@ export class AlgorithmAnalysisWorkflow extends WorkflowEntrypoint<Env, AnalysisI
 
 		// Step 1 — Explain what the algorithm does
 		const explanation = await step.do('explain algorithm', async () => {
-			const result = (await this.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast' as any, {
+			const result = (await this.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
 				messages: [
 					{
 						role: 'system',
@@ -69,7 +69,7 @@ export class AlgorithmAnalysisWorkflow extends WorkflowEntrypoint<Env, AnalysisI
 
 		// Step 2 — Analyse time and space complexity
 		const complexity = await step.do('analyse complexity', async () => {
-			const result = (await this.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast' as any, {
+			const result = (await this.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
 				messages: [
 					{
 						role: 'system',
@@ -120,7 +120,7 @@ ${code}`
 
 		// Step 3 — Suggest improvements
 		const improvements = await step.do('suggest improvements', async () => {
-			const result = (await this.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast' as any, {
+			const result = (await this.env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
 				messages: [
 					{
 						role: 'system',

@@ -1,5 +1,5 @@
 name = "code-analyzer"
-main = "src/index.ts"
+main = ".svelte-kit/cloudflare/_worker.js"
 compatibility_date = "2026-03-06"
 compatibility_flags = ["nodejs_compat"]
 
@@ -20,4 +20,5 @@ binding = "ANALYSIS_WORKFLOW"
 class_name = "AlgorithmAnalysisWorkflow"
 
 [assets]
-directory = "../web/build"
+directory = ".svelte-kit/cloudflare"
+binding = "ASSETS"
