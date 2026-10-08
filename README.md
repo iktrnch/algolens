@@ -52,7 +52,7 @@ bindings are typed in `src/lib/server/env.ts`; generated runtime declarations li
 npm run deploy
 ```
 
-`wrangler.toml` retains the existing `code-analyzer` Worker name, `AnalysisAgent` Durable Object
+`wrangler.jsonc` retains the existing `code-analyzer` Worker name, `AnalysisAgent` Durable Object
 binding and `v1` migration, and `algorithm-analysis` Workflow. Keeping these identifiers
 preserves existing deployed session storage. The `ASSETS` binding serves SvelteKit's generated
 static assets.
