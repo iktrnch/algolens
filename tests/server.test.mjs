@@ -25,21 +25,22 @@ const { AlgorithmAnalysisWorkflow } = await import('../src/lib/server/workflows/
 function mockInstance(event, options = {}) {
 	let disposed = 0;
 	let filter;
-	const subscription = {
-		async next() {
-			if (options.nextError) throw options.nextError;
-			return event;
-		},
-		[Symbol.dispose]() {
-			disposed += 1;
-		}
-	};
+	let nextCalls = 0;
 
 	return {
 		instance: {
 			async subscribe(subscriptionOptions) {
 				filter = subscriptionOptions.filter;
-				return subscription;
+				return {
+					async next() {
+						nextCalls += 1;
+						if (options.nextError) throw options.nextError;
+						return event;
+					},
+					[Symbol.dispose]() {
+						disposed += 1;
+					}
+				};
 			}
 		},
 		get disposed() {
@@ -47,6 +48,9 @@ function mockInstance(event, options = {}) {
 		},
 		get filter() {
 			return filter;
+		},
+		get nextCalls() {
+			return nextCalls;
 		}
 	};
 }
@@ -69,6 +73,7 @@ test('completed Workflow events return the typed result and dispose the subscrip
 
 	assert.deepEqual(await awaitAnalysis(mock.instance), analysisResult);
 	assert.deepEqual(mock.filter, ['workflow_completed', 'workflow_errored', 'workflow_terminated']);
+	assert.equal(mock.nextCalls, 1);
 	assert.equal(mock.disposed, 1);
 });
 
@@ -119,6 +124,34 @@ test('start and recovery use the same explicit Workflow instance without polling
 		['create', { id: 'analysis-id', params: input }],
 		['get', 'analysis-id']
 	]);
+});
+
+test('start reattaches once to the same Workflow after a subscription disconnect', async () => {
+	const disconnected = mockInstance(undefined, { nextError: new Error('RPC disconnected') });
+	const recovered = mockInstance({
+		done: false,
+		value: { type: 'workflow_completed', output: analysisResult }
+	});
+	const calls = [];
+	const workflow = {
+		async create(options) {
+			calls.push(['create', options]);
+			return disconnected.instance;
+		},
+		async get(id) {
+			calls.push(['get', id]);
+			return recovered.instance;
+		}
+	};
+	const input = { code: 'print(1)', language: 'python' };
+
+	assert.deepEqual(await startAnalysis(workflow, 'analysis-id', input), analysisResult);
+	assert.deepEqual(calls, [
+		['create', { id: 'analysis-id', params: input }],
+		['get', 'analysis-id']
+	]);
+	assert.equal(disconnected.disposed, 1);
+	assert.equal(recovered.disposed, 1);
 });
 
 test('the workflow keeps all three AI steps and parses fenced structured results', async () => {

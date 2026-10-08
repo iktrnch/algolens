@@ -33,10 +33,8 @@ function isAnalysisResult(value: unknown): value is AnalysisResult {
 }
 
 export async function awaitAnalysis(instance: WorkflowInstance): Promise<AnalysisResult> {
-	let subscription: WorkflowInstanceSubscription | undefined;
-
 	try {
-		subscription = await instance.subscribe({ filter: TERMINAL_EVENTS });
+		using subscription = await instance.subscribe({ filter: TERMINAL_EVENTS });
 		const event = await subscription.next();
 
 		if (event.done) {
@@ -74,8 +72,6 @@ export async function awaitAnalysis(instance: WorkflowInstance): Promise<Analysi
 			cause instanceof Error ? cause.message : 'The Workflow subscription failed.',
 			'subscription'
 		);
-	} finally {
-		subscription?.[Symbol.dispose]();
 	}
 }
 
@@ -85,7 +81,16 @@ export async function startAnalysis(
 	input: AnalysisInput
 ): Promise<AnalysisResult> {
 	const instance = await workflow.create({ id: instanceId, params: input });
-	return awaitAnalysis(instance);
+
+	try {
+		return await awaitAnalysis(instance);
+	} catch (cause) {
+		if (!(cause instanceof WorkflowAnalysisError) || cause.kind !== 'subscription') throw cause;
+
+		// The Workflow continues independently if its event-subscription RPC disconnects.
+		// Reattach once to the same instance rather than starting duplicate AI work.
+		return await resumeAnalysis(workflow, instanceId);
+	}
 }
 
 export async function resumeAnalysis(
