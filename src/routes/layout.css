@@ -142,7 +142,12 @@ main {
 	stroke-linecap: round;
 	stroke-linejoin: round;
 }
-.theme-toggle {
+.header-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.header-control {
 	display: grid;
 	width: 40px;
 	height: 40px;
@@ -150,18 +155,24 @@ main {
 	border: 1px solid var(--rule);
 	border-radius: 6px;
 	background: transparent;
+	color: var(--ink);
 	cursor: pointer;
 	transition:
 		border-color 180ms ease,
 		background 180ms ease;
 }
-.theme-toggle:hover {
+.header-control:hover {
 	border-color: var(--accent);
 	background: var(--wash);
 }
-.theme-toggle svg {
+.header-control svg {
 	width: 20px;
 	height: 20px;
+}
+.github-link svg {
+	fill: currentColor;
+}
+.theme-toggle svg {
 	fill: none;
 	stroke: currentColor;
 	stroke-width: 1.7;

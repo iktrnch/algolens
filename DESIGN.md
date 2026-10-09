@@ -221,7 +221,7 @@ Borders are one pixel and structural. Code input uses the same shape language as
 
 ### Navigation
 
-- **Header:** A `72px` desktop and `64px` mobile ruled header holds the algorithm-node wordmark and a `40px` square theme toggle.
+- **Header:** A `72px` desktop and `64px` mobile ruled header holds the algorithm-node wordmark, a `40px` square GitHub repository link, and a matching theme toggle.
 - **Theme toggle:** Transparent at rest with a rule border; hover applies the cobalt wash and accent border. Its icon and accessible label communicate the destination theme.
 
 ### Analysis Status
