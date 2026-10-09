@@ -3,33 +3,40 @@
 	import type { AnalysisInput, AnalysisResult } from '#lib/analysis.js';
 	import { analyse as analyseRemote, recoverAnalysis } from './analysis.remote';
 
-	// --- Types ---
+	type Theme = 'light' | 'dark';
 	type AnalysisState = {
 		status: 'idle' | 'running' | 'complete' | 'error';
 		result: AnalysisResult | null;
 		error: string | null;
 		code: string | null;
 		language: string | null;
+		recovered: boolean;
 	};
 	type PendingAnalysis = AnalysisInput & { instanceId: string };
 
-	// --- State ---
 	let code = $state('');
 	let language = $state('python');
+	let theme = $state<Theme>('light');
 	let analysisState = $state<AnalysisState>({
 		status: 'idle',
 		result: null,
 		error: null,
 		code: null,
-		language: null
+		language: null,
+		recovered: false
 	});
-	let stepVisible = $state({ explanation: false, complexity: false, improvements: false });
-
 	const pendingAnalysisKey = 'algolensPendingAnalysis';
-
-	const languages = ['python', 'javascript', 'typescript', 'java', 'cpp', 'c', 'go', 'rust'];
-
-	// Example algorithm to demo the tool
+	const themeKey = 'algolensTheme';
+	const languages = [
+		{ value: 'python', label: 'Python' },
+		{ value: 'javascript', label: 'JavaScript' },
+		{ value: 'typescript', label: 'TypeScript' },
+		{ value: 'java', label: 'Java' },
+		{ value: 'cpp', label: 'C++' },
+		{ value: 'c', label: 'C' },
+		{ value: 'go', label: 'Go' },
+		{ value: 'rust', label: 'Rust' }
+	];
 	const examples: Record<string, string> = {
 		python: `def binary_search(arr, target):
     left, right = 0, len(arr) - 1
@@ -61,16 +68,13 @@ function merge(left, right) {
 }`
 	};
 
-	// Animate result sections in when analysis completes
-	$effect(() => {
-		if (analysisState.status === 'complete') {
-			setTimeout(() => (stepVisible.explanation = true), 100);
-			setTimeout(() => (stepVisible.complexity = true), 300);
-			setTimeout(() => (stepVisible.improvements = true), 500);
-		} else {
-			stepVisible = { explanation: false, complexity: false, improvements: false };
-		}
-	});
+	let resultIsStale = $derived(
+		analysisState.status === 'complete' &&
+			(code !== analysisState.code || language !== analysisState.language)
+	);
+	let selectedLanguage = $derived(
+		languages.find((item) => item.value === language)?.label ?? language
+	);
 
 	function getErrorMessage(cause: unknown): string {
 		if (
@@ -78,9 +82,8 @@ function merge(left, right) {
 			cause !== null &&
 			'message' in cause &&
 			typeof cause.message === 'string'
-		) {
+		)
 			return cause.message;
-		}
 		return 'Unable to run the analysis. Please try again.';
 	}
 
@@ -95,38 +98,37 @@ function merge(left, right) {
 			result,
 			error: null,
 			code: input.code,
-			language: input.language
+			language: input.language,
+			recovered: false
 		};
 	}
 
 	async function analyse(input: AnalysisInput): Promise<AnalysisResult> {
-		const pending: PendingAnalysis = {
-			...input,
-			instanceId: `analysis-${crypto.randomUUID()}`
-		};
+		const pending: PendingAnalysis = { ...input, instanceId: `analysis-${crypto.randomUUID()}` };
 		sessionStorage.setItem(pendingAnalysisKey, JSON.stringify(pending));
-
 		try {
 			const result = await analyseRemote(pending);
 			sessionStorage.removeItem(pendingAnalysisKey);
 			return result;
 		} catch (cause) {
-			if (!isRecoverableConnectionError(cause)) {
-				sessionStorage.removeItem(pendingAnalysisKey);
-			}
+			if (!isRecoverableConnectionError(cause)) sessionStorage.removeItem(pendingAnalysisKey);
 			throw cause;
 		}
 	}
 
 	async function runAnalysis() {
 		if (!code.trim() || analysisState.status === 'running') return;
-
-		analysisState = { status: 'running', result: null, error: null, code, language };
-
+		const input = { code, language };
+		analysisState = {
+			status: 'running',
+			result: null,
+			error: null,
+			code: input.code,
+			language: input.language,
+			recovered: false
+		};
 		try {
-			const input = { code, language };
-			const result = await analyse(input);
-			finishAnalysis(result, input);
+			finishAnalysis(await analyse(input), input);
 		} catch (cause) {
 			analysisState = { ...analysisState, status: 'error', error: getErrorMessage(cause) };
 		}
@@ -135,20 +137,17 @@ function merge(left, right) {
 	function getPendingAnalysis(): PendingAnalysis | null {
 		const stored = sessionStorage.getItem(pendingAnalysisKey);
 		if (!stored) return null;
-
 		try {
 			const value = JSON.parse(stored) as Partial<PendingAnalysis>;
 			if (
 				typeof value.code === 'string' &&
 				typeof value.language === 'string' &&
 				typeof value.instanceId === 'string'
-			) {
+			)
 				return value as PendingAnalysis;
-			}
 		} catch {
-			// Ignore invalid session data and clear it below.
+			/* Invalid session data is cleared below. */
 		}
-
 		sessionStorage.removeItem(pendingAnalysisKey);
 		return null;
 	}
@@ -156,292 +155,259 @@ function merge(left, right) {
 	async function recoverPendingAnalysis() {
 		const pending = getPendingAnalysis();
 		if (!pending) return;
-
+		code = pending.code;
+		language = pending.language;
 		analysisState = {
 			status: 'running',
 			result: null,
 			error: null,
 			code: pending.code,
-			language: pending.language
+			language: pending.language,
+			recovered: true
 		};
-
 		try {
 			const result = await recoverAnalysis(pending.instanceId);
 			sessionStorage.removeItem(pendingAnalysisKey);
 			finishAnalysis(result, pending);
 		} catch (cause) {
-			if (!isRecoverableConnectionError(cause)) {
-				sessionStorage.removeItem(pendingAnalysisKey);
-			}
+			if (!isRecoverableConnectionError(cause)) sessionStorage.removeItem(pendingAnalysisKey);
 			analysisState = { ...analysisState, status: 'error', error: getErrorMessage(cause) };
 		}
 	}
 
 	function loadExample() {
-		// Load example code for the selected language, or default to Python if not available
-		code = examples[language];
-		if (!code) {
-			code = examples['python'];
+		if (examples[language]) code = examples[language];
+		else {
 			language = 'python';
+			code = examples.python;
 		}
 	}
 
-	function reset() {
-		// Clear code and reset state to initial
+	function clearResult() {
 		sessionStorage.removeItem(pendingAnalysisKey);
-		analysisState = { status: 'idle', result: null, error: null, code: null, language: null };
+		analysisState = {
+			status: 'idle',
+			result: null,
+			error: null,
+			code: null,
+			language: null,
+			recovered: false
+		};
+	}
+
+	function handleEditorKeydown(event: KeyboardEvent) {
+		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+			event.preventDefault();
+			void runAnalysis();
+		}
+	}
+
+	function applyTheme(nextTheme: Theme) {
+		theme = nextTheme;
+		document.documentElement.dataset.theme = nextTheme;
+		document.documentElement.style.colorScheme = nextTheme;
+		localStorage.setItem(themeKey, nextTheme);
+	}
+
+	function toggleTheme() {
+		applyTheme(theme === 'light' ? 'dark' : 'light');
 	}
 
 	onMount(() => {
+		const stored = localStorage.getItem(themeKey);
+		const preferred: Theme = window.matchMedia('(prefers-color-scheme: dark)').matches
+			? 'dark'
+			: 'light';
+		applyTheme(stored === 'dark' || stored === 'light' ? stored : preferred);
 		void recoverPendingAnalysis();
 	});
 </script>
 
 <svelte:head>
-	<title>AlgoLens - Review your algorythms</title>
-	<link rel="preconnect" href="https://fonts.googleapis.com" />
-	<!-- FONTS -->
-	<link
-		href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700;800&display=swap"
-		rel="stylesheet"
+	<title>AlgoLens — Understand your algorithm</title>
+	<meta
+		name="description"
+		content="Turn an algorithm into a clear explanation, complexity assessment, and practical improvements."
 	/>
 </svelte:head>
 
-<div class="min-h-screen bg-[#0a0a0a] text-[#e2e2e2]" style="font-family: 'Syne', sans-serif;">
-	<!-- Subtle grid background -->
-	<div
-		class="pointer-events-none fixed inset-0 opacity-[0.03]"
-		style="background-image: linear-gradient(#4ade80 1px, transparent 1px), linear-gradient(90deg, #4ade80 1px, transparent 1px); background-size: 40px 40px;"
-	></div>
-
-	<!-- Header -->
-	<header
-		class="relative z-10 flex items-center justify-between border-b border-[#1e1e1e] px-8 py-5"
-	>
-		<div class="flex items-center gap-3">
-			<div class="h-2 w-2 animate-pulse rounded-full bg-green-400"></div>
-			<span class="font-mono text-sm tracking-widest text-green-400 uppercase">AlgoLens</span>
-		</div>
-		<div class="flex flex-col gap-1 text-right font-mono text-xs tracking-wider text-[#444]">
-			<span>Powered by Cloudflare Workers AI</span>
-			<span>
-				Developed by <a href="https://github.com/iktrnch" class="underline hover:text-green-400"
-					>Illia Katerynych</a
-				>
-			</span>
-		</div>
+<div class="app-shell">
+	<header class="site-header">
+		<a class="wordmark" href="/" aria-label="AlgoLens home">
+			<svg viewBox="0 0 32 32" aria-hidden="true"
+				><path d="M8 7h7v7H8zM17 18h7v7h-7z"></path><path
+					d="M15 10.5h4.5V18M12 14v7.5h5"
+					fill="none"
+				></path></svg
+			>
+			<span>AlgoLens</span>
+		</a>
+		<button
+			class="theme-toggle"
+			type="button"
+			onclick={toggleTheme}
+			aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} theme`}
+		>
+			<svg viewBox="0 0 24 24" aria-hidden="true">
+				{#if theme === 'light'}<path d="M20.4 15.2A8.5 8.5 0 0 1 8.8 3.6 8.5 8.5 0 1 0 20.4 15.2Z"
+					></path>
+				{:else}<circle cx="12" cy="12" r="3.5"></circle><path
+						d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+					></path>{/if}
+			</svg>
+		</button>
 	</header>
 
-	<main class="relative z-10 mx-auto max-w-6xl px-8 py-12">
-		<!-- Hero text -->
-		<div class="mb-12">
-			<h1
-				class="mb-3 text-5xl leading-none font-black tracking-tight text-white"
-				style="font-family: 'Syne', sans-serif;"
-			>
-				Algorithm<br />
-				<span class="text-green-400">Analysis.</span>
-			</h1>
-			<p class="font-mono text-sm text-[#555]">
-				Paste your algorithm. Get complexity, explanation, and improvements.
-			</p>
-		</div>
+	<main>
+		<section class="introduction" aria-labelledby="page-title">
+			<h1 id="page-title">See how your algorithm works.</h1>
+			<p>Paste code to see what it does, how it scales, and how to improve it.</p>
+		</section>
 
-		<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-			<!-- Left: Input panel -->
-			<div class="flex flex-col gap-4">
-				<!-- Language + controls bar -->
-				<div class="flex items-center justify-between">
-					<div class="flex flex-row flex-wrap gap-2 lg:grid-cols-4">
-						{#each languages as lang}
-							<button
-								onclick={() => (language = lang)}
-								class="rounded px-3 py-1.5 font-mono text-xs transition-all duration-150
-                  {language === lang
-									? 'bg-green-400 font-bold text-black'
-									: 'border border-[#222] text-[#555] hover:border-[#333] hover:text-green-400'}"
+		<section class="workspace" aria-label="Algorithm analysis workspace">
+			<div class="input-column">
+				<div class="section-heading">
+					<div>
+						<h2>Your algorithm</h2>
+						<p>Choose the language, then paste the code you want to understand.</p>
+					</div>
+					<button class="text-button" type="button" onclick={loadExample}>Load an example</button>
+				</div>
+				<div class="input-surface">
+					<div class="field-row">
+						<label for="language">Language</label>
+						<div class="select-wrap">
+							<select
+								id="language"
+								bind:value={language}
+								disabled={analysisState.status === 'running'}
+								>{#each languages as item}<option value={item.value}>{item.label}</option
+									>{/each}</select
 							>
-								{lang}
-							</button>
-						{/each}
+							<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg>
+						</div>
 					</div>
-					<button
-						onclick={loadExample}
-						class="ml-2 min-w-fit self-stretch rounded border border-[#222] px-3 font-mono text-xs text-[#444] transition-colors hover:border-[#333] hover:text-green-400"
-					>
-						load example →
-					</button>
-				</div>
-
-				<!-- Code input -->
-				<div class="group relative">
-					<textarea
-						bind:value={code}
-						placeholder="// paste your algorithm here"
-						class="h-80 w-full resize-none rounded-lg border border-[#1e1e1e]
-                   bg-[#0f0f0f] p-5 font-mono text-sm
-                   leading-relaxed text-[#ccc] placeholder-[#2a2a2a] transition-colors
-                   duration-200 group-hover:border-[#2a2a2a] focus:border-green-400/40 focus:outline-none"
-						style="font-family: 'JetBrains Mono', monospace;"
-						spellcheck="false"
-					></textarea>
-					<!-- Character count -->
-					<div class="absolute right-4 bottom-3 font-mono text-xs text-[#333]">
-						{code.length} chars
+					<div class="code-field">
+						<div class="code-label-row">
+							<label for="algorithm-code">Code</label><span aria-live="polite"
+								>{code.length.toLocaleString()} characters</span
+							>
+						</div>
+						<textarea
+							id="algorithm-code"
+							bind:value={code}
+							onkeydown={handleEditorKeydown}
+							placeholder="Paste your algorithm here"
+							spellcheck="false"
+							disabled={analysisState.status === 'running'}
+						></textarea>
 					</div>
-				</div>
-
-				<!-- Analyse button -->
-				<button
-					onclick={runAnalysis}
-					disabled={!code.trim() || analysisState.status === 'running'}
-					class="w-full rounded-lg py-4 font-mono text-sm font-bold tracking-widest
-                 uppercase transition-all duration-200
-                 {!code.trim() || analysisState.status === 'running'
-						? 'cursor-not-allowed border border-[#1a1a1a] bg-[#111] text-[#333]'
-						: 'bg-green-400 text-black hover:bg-green-300 active:scale-[0.99]'}"
-				>
-					{#if analysisState.status === 'running'}
-						<span class="flex items-center justify-center gap-3">
-							<span
-								class="inline-block h-3 w-3 animate-spin rounded-full border border-black border-t-transparent"
-							></span>
-							Analysing...
-						</span>
-					{:else}
-						→ Run Analysis
-					{/if}
-				</button>
-
-				<!-- Workflow steps indicator (shown while running) -->
-				{#if analysisState.status === 'running'}
-					<div class="space-y-3 rounded-lg border border-[#1e1e1e] p-4">
-						<p class="mb-3 font-mono text-xs tracking-widest text-[#444] uppercase">
-							Workflow steps
-						</p>
-						{#each ['Explaining algorithm', 'Computing complexity', 'Finding improvements'] as step, i}
-							<div class="flex items-center gap-3">
-								<div
-									class="h-1.5 w-1.5 animate-pulse rounded-full bg-green-400"
-									style="animation-delay: {i * 300}ms"
-								></div>
-								<span class="font-mono text-xs text-[#555]">{step}</span>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
-
-			<!-- Right: Results panel -->
-			<div class="flex flex-col gap-4">
-				{#if analysisState.status === 'idle'}
-					<!-- Empty state -->
-					<div
-						class="flex h-full min-h-80 items-center justify-center rounded-lg
-                      border border-dashed border-[#1a1a1a]"
-					>
-						<p class="text-center font-mono text-xs leading-loose text-[#2a2a2a]">
-							results will appear here<br />after analysis
-						</p>
-					</div>
-				{:else if analysisState.status === 'error'}
-					<div class="rounded-lg border border-red-900/50 bg-red-950/20 p-5">
-						<p class="mb-2 font-mono text-xs tracking-widest text-red-400 uppercase">Error</p>
-						<p class="font-mono text-sm text-red-300">{analysisState.error}</p>
+					<div class="submit-row">
 						<button
-							onclick={reset}
-							class="mt-4 font-mono text-xs text-[#444] transition-colors hover:text-white"
+							class="primary-button"
+							type="button"
+							onclick={runAnalysis}
+							disabled={!code.trim() || analysisState.status === 'running'}
 						>
-							← reset
+							{analysisState.status === 'running'
+								? 'Analysing…'
+								: resultIsStale
+									? 'Run updated analysis'
+									: 'Run analysis'}
 						</button>
 					</div>
+				</div>
+
+				<div class="input-meta" role="status" aria-live="polite">
+					{#if analysisState.status === 'running'}
+						<strong>{analysisState.recovered ? 'Reconnected to analysis.' : 'Analysing…'}</strong>
+					{:else if analysisState.status === 'error'}
+						<strong class="status-error">Analysis needs attention.</strong>
+					{:else if resultIsStale}
+						<strong class="status-warning">Result is out of date.</strong>
+					{:else if analysisState.status === 'complete'}
+						<strong class="status-success">Analysis complete.</strong>
+					{/if}
+					<span>Code is sent to Cloudflare Workers AI.</span>
+				</div>
+			</div>
+
+			<div class="result-column" aria-live="polite" aria-busy={analysisState.status === 'running'}>
+				<header class="result-heading">
+					<h2>Your worked explanation</h2>
+					{#if analysisState.status === 'complete'}
+						<button class="text-button" type="button" onclick={clearResult}>Analyse another</button>
+					{/if}
+				</header>
+
+				{#if analysisState.status === 'idle'}
+					<div class="empty-state">
+						<p>Explanation, complexity, and improvements will appear here.</p>
+					</div>
 				{:else if analysisState.status === 'running'}
-					<div
-						class="flex h-full min-h-80 items-center justify-center
-                      rounded-lg border border-[#1e1e1e]"
-					>
-						<div class="space-y-3 text-center">
-							<div
-								class="inline-block h-6 w-6 animate-spin rounded-full border border-green-400 border-t-transparent"
-							></div>
-							<p class="font-mono text-xs text-[#444]">running workflow...</p>
+					<div class="running-state">
+						<div class="running-heading">
+							<span class="spinner" aria-hidden="true"></span>
+							<div>
+								<h3>
+									{analysisState.recovered
+										? 'Rejoining your analysis'
+										: 'Preparing your worked explanation'}
+								</h3>
+								<p>
+									{analysisState.recovered
+										? 'The original request is still running. We are waiting for its result.'
+										: `Reviewing your ${selectedLanguage} submission. This can take a moment.`}
+								</p>
+							</div>
+						</div>
+					</div>
+				{:else if analysisState.status === 'error'}
+					<div class="error-state" role="alert">
+						<svg viewBox="0 0 24 24" aria-hidden="true"
+							><path d="M12 8v5M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg
+						>
+						<div>
+							<h3>We couldn’t complete the analysis</h3>
+							<p>{analysisState.error}</p>
+							<div class="error-actions">
+								<button class="secondary-button" type="button" onclick={runAnalysis}
+									>Try again</button
+								><button class="text-button" type="button" onclick={clearResult}>Dismiss</button>
+							</div>
 						</div>
 					</div>
 				{:else if analysisState.status === 'complete' && analysisState.result}
-					{@const r = analysisState.result}
-
-					<!-- Explanation -->
-					<div
-						class="rounded-lg border border-[#1e1e1e] p-5 transition-all duration-500
-                      {stepVisible.explanation
-							? 'translate-y-0 opacity-100'
-							: 'translate-y-4 opacity-0'}"
-					>
-						<div class="mb-3 flex items-center gap-2">
-							<span class="font-mono text-xs tracking-widest text-green-400 uppercase"
-								>01 / Explanation</span
-							>
-						</div>
-						<p class="text-sm leading-relaxed text-[#bbb]">{r.explanation}</p>
-					</div>
-
-					<!-- Complexity -->
-					<div
-						class="rounded-lg border border-[#1e1e1e] p-5 transition-all duration-500
-                      {stepVisible.complexity
-							? 'translate-y-0 opacity-100'
-							: 'translate-y-4 opacity-0'}"
-					>
-						<div class="mb-4 flex items-center gap-2">
-							<span class="font-mono text-xs tracking-widest text-green-400 uppercase"
-								>02 / Complexity</span
-							>
-						</div>
-						<div class="mb-4 grid grid-cols-2 gap-3">
-							<div class="rounded-lg border border-[#1a1a1a] bg-[#0f0f0f] p-4 text-center">
-								<p class="mb-2 font-mono text-xs tracking-widest text-[#444] uppercase">Time</p>
-								<p class="font-mono text-2xl font-bold text-green-400">{r.complexity.time}</p>
+					{@const result = analysisState.result}
+					<article class="worked-solution">
+						{#if resultIsStale}<div class="stale-notice" role="status">
+								<strong>Your code has changed.</strong><span
+									>This explanation still belongs to the submitted version shown above.</span
+								>
+							</div>{/if}
+						<section class="result-section">
+							<h3>What it does</h3>
+							<p>{result.explanation}</p>
+						</section>
+						<section class="result-section">
+							<h3>Complexity</h3>
+							<div class="complexity-card">
+								<div class="complexity-values">
+									<div><span>Time</span><strong>{result.complexity.time}</strong></div>
+									<div><span>Space</span><strong>{result.complexity.space}</strong></div>
+								</div>
+								<p>{result.complexity.explanation}</p>
 							</div>
-							<div class="rounded-lg border border-[#1a1a1a] bg-[#0f0f0f] p-4 text-center">
-								<p class="mb-2 font-mono text-xs tracking-widest text-[#444] uppercase">Space</p>
-								<p class="font-mono text-2xl font-bold text-green-400">{r.complexity.space}</p>
-							</div>
-						</div>
-						<p class="font-mono text-xs leading-relaxed text-[#666]">{r.complexity.explanation}</p>
-					</div>
-
-					<!-- Improvements -->
-					<div
-						class="rounded-lg border border-[#1e1e1e] p-5 transition-all duration-500
-                      {stepVisible.improvements
-							? 'translate-y-0 opacity-100'
-							: 'translate-y-4 opacity-0'}"
-					>
-						<div class="mb-4 flex items-center gap-2">
-							<span class="font-mono text-xs tracking-widest text-green-400 uppercase"
-								>03 / Improvements</span
-							>
-						</div>
-						<ul class="space-y-3">
-							{#each r.improvements as improvement, i}
-								<li class="flex gap-3">
-									<span class="mt-0.5 shrink-0 font-mono text-xs text-[#333]">
-										{String(i + 1).padStart(2, '0')}
-									</span>
-									<span class="text-sm leading-relaxed text-[#bbb]">{improvement}</span>
-								</li>
-							{/each}
-						</ul>
-
-						<button
-							onclick={reset}
-							class="mt-6 font-mono text-xs text-[#444] transition-colors hover:text-green-400"
-						>
-							← analyse another
-						</button>
-					</div>
+						</section>
+						<section class="result-section improvements-section">
+							<h3>Ways to improve it</h3>
+							{#if result.improvements.length}<ol>
+									{#each result.improvements as improvement}<li>{improvement}</li>{/each}
+								</ol>{:else}<p>No specific improvements were returned for this analysis.</p>{/if}
+						</section>
+					</article>
 				{/if}
 			</div>
-		</div>
+		</section>
 	</main>
 </div>
